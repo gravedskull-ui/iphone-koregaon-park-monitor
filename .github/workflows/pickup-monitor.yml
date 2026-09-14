@@ -2,6 +2,13 @@ name: Apple Pickup Monitor
 
 on:
   workflow_dispatch:
+    inputs:
+      test_notification:
+        description: "Send a test notification to ntfy"
+        required: true
+        default: false
+        type: boolean
+
   schedule:
     - cron: "*/5 * * * *"
 
@@ -34,6 +41,7 @@ jobs:
       - name: Check Apple pickup availability
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TEST_NOTIFICATION: ${{ inputs.test_notification || 'false' }}
         run: python monitor.py
 
       - name: Commit state change

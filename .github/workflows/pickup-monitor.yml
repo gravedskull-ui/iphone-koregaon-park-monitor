@@ -1,4 +1,4 @@
-name: Apple Pickup Monitor
+name: Apple Pickup Monitor - Koregaon Park
 
 on:
   workflow_dispatch:

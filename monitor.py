@@ -1,40 +1,36 @@
 import json
 import os
-import smtplib
 import sys
-from email.message import EmailMessage
 from pathlib import Path
 from urllib.parse import quote
 
 import requests
 
 APPLE_PART_NUMBER = "MJXV4HN/A"
-SEARCH_LOCATION = "411001"
-TARGET_STORE = "Apple Koregaon Park"
-TARGET_STORE_MATCH = "koregaon park"
+APPLE_STORE_NUMBER = "R788"
+APPLE_STORE_NAME = "Koregaon Park"
 
 APPLE_URL = (
-    "https://www.apple.com/in/shop/fulfillment-messages"
-    f"?pl=true&searchNearby=true&parts.0={quote(APPLE_PART_NUMBER)}"
-    f"&location={quote(SEARCH_LOCATION)}"
-    "&purchaseOption=fullPrice&mts.0=regular&mts.1=sticky&fts=true"
+    "https://www.apple.com/in/shop/retail/pickup-message"
+    f"?pl=true"
+    f"&mts.0=regular"
+    f"&parts.0={quote(APPLE_PART_NUMBER)}"
+    f"&store={APPLE_STORE_NUMBER}"
 )
 
 STATE_FILE = Path("state/status.json")
 
-# Primary notification channel.
-ENABLE_NTFY = True
-
-# Optional email channel.
-ENABLE_EMAIL = False
-
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
-NTFY_SERVER = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
+NTFY_SERVER = os.environ.get(
+    "NTFY_SERVER",
+    "https://ntfy.sh"
+).rstrip("/")
 
 HEADERS = {
     "User-Agent": (
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) "
-        "AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/140.0.0.0 Safari/537.36"
     ),
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-IN,en;q=0.9",
@@ -43,224 +39,257 @@ HEADERS = {
 
 def load_state():
     if not STATE_FILE.exists():
-        return {"available": False, "store": None}
+        return {
+            "available": False,
+            "store": APPLE_STORE_NUMBER
+        }
+
     try:
-        return json.loads(STATE_FILE.read_text())
+        return json.loads(
+            STATE_FILE.read_text()
+        )
     except Exception:
-        return {"available": False, "store": None}
+        return {
+            "available": False,
+            "store": APPLE_STORE_NUMBER
+        }
 
 
-def save_state(available, store):
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+def save_state(available):
+    STATE_FILE.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
     STATE_FILE.write_text(
         json.dumps(
             {
                 "available": available,
-                "store": store,
-                "part_number": APPLE_PART_NUMBER,
+                "store": APPLE_STORE_NUMBER,
+                "part_number": APPLE_PART_NUMBER
             },
-            indent=2,
-        )
-        + "\n"
+            indent=2
+        ) + "\n"
     )
 
 
-def get_store_data():
-    response = requests.get(APPLE_URL, headers=HEADERS, timeout=20)
+def get_pickup_status():
+    response = requests.get(
+        APPLE_URL,
+        headers=HEADERS,
+        timeout=20
+    )
+
     response.raise_for_status()
 
     data = response.json()
 
-    # Apple's response has historically appeared under body.content.pickupMessage,
-    # while some variants expose stores directly under body. Handle both.
     body = data.get("body", {})
-    content = body.get("content", {})
-    pickup_message = content.get("pickupMessage", {})
-    stores = pickup_message.get("stores")
+    stores = body.get("stores", [])
 
-    if stores is None:
-        stores = body.get("stores")
+    if not stores:
+        raise RuntimeError(
+            "Apple returned no stores."
+        )
 
-    if not isinstance(stores, list):
-        raise RuntimeError("Apple response did not contain a usable stores list.")
-
-    return stores
-
-
-def find_target_store(stores):
-    matches = []
+    target_store = None
 
     for store in stores:
-        name = str(store.get("storeName", ""))
-        address = str(store.get("address", ""))
-        number = str(store.get("storeNumber", ""))
+        if (
+            str(store.get("storeNumber", ""))
+            == APPLE_STORE_NUMBER
+        ):
+            target_store = store
+            break
 
-        haystack = f"{name} {address}".lower()
-
-        if TARGET_STORE_MATCH in haystack:
-            matches.append((store, name, address, number))
-
-    if not matches:
-        available_names = [
-            f"{s.get('storeName', '')} [{s.get('storeNumber', '')}]"
-            for s in stores
-        ]
+    if target_store is None:
         raise RuntimeError(
-            "Target store was not found in Apple's response. "
-            f"Stores returned: {available_names}"
+            f"Apple did not return store {APPLE_STORE_NUMBER}."
         )
 
-    # Prefer an exact store-name match if Apple supplies one.
-    exact = [
-        x for x in matches
-        if x[1].strip().lower() == TARGET_STORE.lower()
-    ]
-    return exact[0] if exact else matches[0]
-
-
-def extract_availability(store):
-    parts = store.get("partsAvailability", {})
-    item = parts.get(APPLE_PART_NUMBER)
-
-    if not isinstance(item, dict):
-        raise RuntimeError(
-            f"SKU {APPLE_PART_NUMBER} was not present for the target store."
-        )
-
-    pickup_display = str(item.get("pickupDisplay", "")).strip().lower()
-    title = (
-        item.get("storePickupProductTitle")
-        or item.get("messageTypes", {})
-        .get("regular", {})
-        .get("storePickupProductTitle")
-        or f"iPhone 18 Pro Max 512GB Burgundy ({APPLE_PART_NUMBER})"
+    parts = target_store.get(
+        "partsAvailability",
+        {}
     )
-    quote = (
-        item.get("pickupSearchQuote")
-        or item.get("pickupQuote")
-        or item.get("storePickupQuote")
-        or ""
+
+    product = parts.get(
+        APPLE_PART_NUMBER
+    )
+
+    if not isinstance(product, dict):
+        raise RuntimeError(
+            f"SKU {APPLE_PART_NUMBER} "
+            "was not returned by Apple."
+        )
+
+    pickup_display = str(
+        product.get(
+            "pickupDisplay",
+            ""
+        )
+    ).strip().lower()
+
+    title = (
+        product
+        .get("messageTypes", {})
+        .get("regular", {})
+        .get(
+            "storePickupProductTitle",
+            "iPhone 18 Pro Max 512GB Burgundy"
+        )
+    )
+
+    pickup_quote = (
+        product.get(
+            "pickupSearchQuote",
+            ""
+        )
+    )
+
+    store_pickup_quote = (
+        product
+        .get("messageTypes", {})
+        .get("regular", {})
+        .get(
+            "storePickupQuote",
+            ""
+        )
     )
 
     if pickup_display == "available":
-        return True, title, quote
+        available = True
 
-    if pickup_display in {"unavailable", "not available", "unavailable today"}:
-        return False, title, quote
+    elif pickup_display in (
+        "unavailable",
+        "ineligible"
+    ):
+        available = False
 
-    raise RuntimeError(
-        f"Unexpected pickupDisplay value: {pickup_display!r}"
+    else:
+        raise RuntimeError(
+            "Unexpected Apple pickupDisplay: "
+            f"{pickup_display!r}"
+        )
+
+    return {
+        "available": available,
+        "title": title,
+        "pickup_display": pickup_display,
+        "pickup_quote": pickup_quote,
+        "store_pickup_quote": store_pickup_quote
+    }
+
+
+def send_notification(result):
+    if not NTFY_TOPIC:
+        raise RuntimeError(
+            "NTFY_TOPIC GitHub secret is not configured."
+        )
+
+    message = (
+        "🚨 Apple Store Pickup Available!\n\n"
+        f"Product: {result['title']}\n"
+        "Capacity: 512GB\n"
+        "Finish: Burgundy\n"
+        f"Store: Apple {APPLE_STORE_NAME}\n"
+        f"Store ID: {APPLE_STORE_NUMBER}\n"
+        f"Pickup: {result['store_pickup_quote']}\n\n"
+        "Check Apple immediately:\n"
+        "https://www.apple.com/in/shop/buy-iphone/iphone-18-pro"
     )
 
+    url = (
+        f"{NTFY_SERVER}/"
+        f"{quote(NTFY_TOPIC, safe='')}"
+    )
 
-def send_ntfy(title, message):
-    if not ENABLE_NTFY:
-        return
-
-    if not NTFY_TOPIC:
-        raise RuntimeError("NTFY_TOPIC is not configured.")
-
-    url = f"{NTFY_SERVER}/{quote(NTFY_TOPIC, safe='')}"
     response = requests.post(
         url,
         data=message.encode("utf-8"),
         headers={
-            "Title": title,
+            "Title": "🍎 iPhone 18 Pro Max Pickup Available",
             "Priority": "urgent",
             "Tags": "iphone,apple,rotating_light",
-            "Click": "https://www.apple.com/in/shop/buy-iphone/iphone-18-pro",
+            "Click": (
+                "https://www.apple.com/in/shop/"
+                "buy-iphone/iphone-18-pro"
+            )
         },
-        timeout=15,
+        timeout=15
     )
+
     response.raise_for_status()
-
-
-def send_email(title, message):
-    if not ENABLE_EMAIL:
-        return
-
-    required = [
-        "SMTP_HOST",
-        "SMTP_PORT",
-        "SMTP_USERNAME",
-        "SMTP_PASSWORD",
-        "ALERT_EMAIL_TO",
-        "ALERT_EMAIL_FROM",
-    ]
-
-    missing = [x for x in required if not os.environ.get(x)]
-    if missing:
-        raise RuntimeError(
-            "Email enabled but missing environment variables: "
-            + ", ".join(missing)
-        )
-
-    msg = EmailMessage()
-    msg["Subject"] = title
-    msg["From"] = os.environ["ALERT_EMAIL_FROM"]
-    msg["To"] = os.environ["ALERT_EMAIL_TO"]
-    msg.set_content(message)
-
-    host = os.environ["SMTP_HOST"]
-    port = int(os.environ["SMTP_PORT"])
-
-    with smtplib.SMTP(host, port, timeout=20) as server:
-        server.starttls()
-        server.login(
-            os.environ["SMTP_USERNAME"],
-            os.environ["SMTP_PASSWORD"],
-        )
-        server.send_message(msg)
-
-
-def notify(store_name, store_number, title, quote):
-    message = (
-        "🚨 Apple Store Pickup Available!\n\n"
-        f"Product: {title}\n"
-        "Capacity: 512GB\n"
-        "Finish: Burgundy\n"
-        f"Store: {store_name}\n"
-        f"Store ID: {store_number or 'not supplied'}\n"
-        f"Pickup: {quote or 'Available'}\n\n"
-        "Buy/check now:\n"
-        "https://www.apple.com/in/shop/buy-iphone/iphone-18-pro"
-    )
-
-    send_ntfy("🍎 iPhone 18 Pro Max pickup available", message)
-    send_email("🍎 iPhone 18 Pro Max pickup available", message)
 
 
 def main():
     previous = load_state()
 
     try:
-        stores = get_store_data()
-        store, store_name, address, store_number = find_target_store(stores)
-        available, title, quote = extract_availability(store)
+        result = get_pickup_status()
 
-        print(f"Store: {store_name}")
-        print(f"Store ID: {store_number}")
-        print(f"Address: {address}")
-        print(f"Product: {title}")
-        print(f"Availability: {'AVAILABLE' if available else 'UNAVAILABLE'}")
-        print(f"Pickup message: {quote}")
+        print(
+            f"Store: Apple {APPLE_STORE_NAME}"
+        )
 
-        previous_available = bool(previous.get("available", False))
+        print(
+            f"SKU: {APPLE_PART_NUMBER}"
+        )
 
-        # Notify only on the transition into available.
-        if available and not previous_available:
-            notify(store_name, store_number, title, quote)
-            print("Notification sent.")
+        print(
+            f"Product: {result['title']}"
+        )
 
-        save_state(available, store_number)
+        print(
+            "Pickup status: "
+            f"{result['pickup_display']}"
+        )
+
+        print(
+            f"Pickup message: "
+            f"{result['store_pickup_quote']}"
+        )
+
+        previous_available = bool(
+            previous.get("available", False)
+        )
+
+        if (
+            result["available"]
+            and not previous_available
+        ):
+            send_notification(result)
+
+            print(
+                "🚨 Availability detected. "
+                "Notification sent."
+            )
+
+        elif result["available"]:
+            print(
+                "Still available. "
+                "No duplicate notification sent."
+            )
+
+        else:
+            print(
+                "Currently unavailable."
+            )
+
+        save_state(
+            result["available"]
+        )
+
         return 0
 
-    except Exception as exc:
-        # Unknown is deliberately not written as unavailable.
-        # This prevents API blocks/errors from causing false state transitions.
-        print(f"CHECK FAILED / UNKNOWN: {exc}", file=sys.stderr)
+    except Exception as error:
+        print(
+            "CHECK FAILED / UNKNOWN: "
+            f"{error}",
+            file=sys.stderr
+        )
+
         return 2
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

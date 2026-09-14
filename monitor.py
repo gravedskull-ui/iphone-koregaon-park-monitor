@@ -35,14 +35,14 @@ APPLE_URL = (
 
 
 # ============================================================
-# LOCAL STATE
+# STATE
 # ============================================================
 
 STATE_FILE = Path("state/status.json")
 
 
 # ============================================================
-# NOTIFICATION CONFIGURATION
+# NTFY CONFIGURATION
 # ============================================================
 
 NTFY_TOPIC = os.environ.get(
@@ -56,9 +56,9 @@ NTFY_SERVER = os.environ.get(
 ).rstrip("/")
 
 
-# GitHub Actions sends this as "true" when the
-# manual "Send a test notification to ntfy"
-# checkbox is selected.
+# ============================================================
+# TEST MODE
+# ============================================================
 
 TEST_NOTIFICATION = (
     os.environ.get(
@@ -70,7 +70,7 @@ TEST_NOTIFICATION = (
 
 
 # ============================================================
-# HTTP CONFIGURATION
+# HTTP HEADERS
 # ============================================================
 
 HEADERS = {
@@ -98,17 +98,9 @@ HEADERS = {
 # ============================================================
 
 def load_state():
-    """
-    Load the previous availability state.
-
-    If no valid state exists, assume unavailable.
-
-    This is important because the first successful check
-    should establish a baseline rather than immediately
-    generating an availability notification.
-    """
 
     if not STATE_FILE.exists():
+
         return {
             "available": False,
             "store": APPLE_STORE_NUMBER,
@@ -116,13 +108,17 @@ def load_state():
         }
 
     try:
+
         state = json.loads(
             STATE_FILE.read_text(
                 encoding="utf-8"
             )
         )
 
-        if not isinstance(state, dict):
+        if not isinstance(
+            state,
+            dict
+        ):
             raise ValueError(
                 "State file is not a JSON object."
             )
@@ -130,9 +126,12 @@ def load_state():
         return state
 
     except Exception as error:
+
         print(
-            "WARNING: Could not read state file. "
-            f"Starting with unavailable baseline. "
+            "WARNING: Could not read state file."
+        )
+
+        print(
             f"Reason: {error}"
         )
 
@@ -144,13 +143,6 @@ def load_state():
 
 
 def save_state(available):
-    """
-    Save the current availability state.
-
-    Only successful Apple checks call this function.
-    API failures therefore never overwrite a previously
-    known state with 'unavailable'.
-    """
 
     STATE_FILE.parent.mkdir(
         parents=True,
@@ -173,19 +165,13 @@ def save_state(available):
 
 
 # ============================================================
-# APPLE PICKUP CHECK
+# APPLE PICKUP STATUS
 # ============================================================
 
 def get_pickup_status():
-    """
-    Query Apple's current pickup API and return the
-    availability information for the exact target SKU
-    and store.
-    """
 
     last_error = None
 
-    # Small retry mechanism for transient Apple/API errors.
     for attempt in range(1, 4):
 
         try:
@@ -202,7 +188,7 @@ def get_pickup_status():
             )
 
             print(
-                f"Apple API HTTP status: "
+                "Apple API HTTP status: "
                 f"{response.status_code}"
             )
 
@@ -221,6 +207,7 @@ def get_pickup_status():
             )
 
             if not stores:
+
                 raise RuntimeError(
                     "Apple returned no stores."
                 )
@@ -244,10 +231,12 @@ def get_pickup_status():
                     store_number
                     == APPLE_STORE_NUMBER
                 ):
+
                     target_store = store
                     break
 
             if target_store is None:
+
                 raise RuntimeError(
                     "Apple did not return "
                     f"store {APPLE_STORE_NUMBER} "
@@ -255,7 +244,7 @@ def get_pickup_status():
                 )
 
             # ------------------------------------------------
-            # Find exact product SKU
+            # Find exact SKU
             # ------------------------------------------------
 
             parts = target_store.get(
@@ -271,6 +260,7 @@ def get_pickup_status():
                 product,
                 dict
             ):
+
                 raise RuntimeError(
                     "Apple did not return SKU "
                     f"{APPLE_PART_NUMBER} "
@@ -278,7 +268,7 @@ def get_pickup_status():
                 )
 
             # ------------------------------------------------
-            # Pickup availability
+            # Pickup status
             # ------------------------------------------------
 
             pickup_display = str(
@@ -297,13 +287,18 @@ def get_pickup_status():
                 {}
             )
 
-            regular_message = message_types.get(
-                "regular",
-                {}
+            regular_message = (
+                message_types.get(
+                    "regular",
+                    {}
+                )
             )
 
-            title = regular_message.get(
-                "storePickupProductTitle",
+            title = (
+                regular_message.get(
+                    "storePickupProductTitle"
+                )
+                or
                 f"{PRODUCT_NAME} "
                 f"{CAPACITY} "
                 f"{FINISH}"
@@ -326,7 +321,7 @@ def get_pickup_status():
             )
 
             # ------------------------------------------------
-            # Interpret availability
+            # Interpret status
             # ------------------------------------------------
 
             if pickup_display == "available":
@@ -395,7 +390,7 @@ def get_pickup_status():
 
 
 # ============================================================
-# NTFY COMMON SENDER
+# NTFY SENDER
 # ============================================================
 
 def send_ntfy(
@@ -404,14 +399,12 @@ def send_ntfy(
     priority="high",
     tags="iphone,apple"
 ):
-    """
-    Send a push notification through ntfy.
-    """
 
     if not NTFY_TOPIC:
 
         raise RuntimeError(
-            "NTFY_TOPIC GitHub secret is not configured."
+            "NTFY_TOPIC GitHub secret "
+            "is not configured."
         )
 
     url = (
@@ -423,6 +416,9 @@ def send_ntfy(
         url,
         data=message.encode("utf-8"),
         headers={
+            # IMPORTANT:
+            # Keep HTTP header values ASCII.
+            # Emojis belong in the message body.
             "Title": title,
             "Priority": priority,
             "Tags": tags,
@@ -440,19 +436,13 @@ def send_ntfy(
 # ============================================================
 
 def send_test_notification():
-    """
-    Send a test notification without contacting Apple.
-
-    This is deliberately independent from the Apple
-    availability check.
-    """
 
     print(
-        "🧪 Test notification mode enabled."
+        "Test notification mode enabled."
     )
 
     message = (
-        "✅ Apple Pickup Monitor Test\n\n"
+        "OK - Apple Pickup Monitor Test\n\n"
 
         "This is a TEST notification.\n\n"
 
@@ -466,21 +456,21 @@ def send_test_notification():
         f"Apple {APPLE_STORE_NAME}, Pune\n\n"
 
         "No Apple availability check was "
-        "performed during this test.\n"
+        "performed during this test.\n\n"
 
         "No purchase or reservation action "
         "was performed."
     )
 
     send_ntfy(
-        title="🧪 Apple Pickup Monitor Test",
+        title="Apple Pickup Monitor Test",
         message=message,
         priority="high",
         tags="test,iphone,apple"
     )
 
     print(
-        "✅ TEST NOTIFICATION SENT SUCCESSFULLY"
+        "TEST NOTIFICATION SENT SUCCESSFULLY"
     )
 
 
@@ -489,25 +479,23 @@ def send_test_notification():
 # ============================================================
 
 def send_notification(result):
-    """
-    Send an urgent notification when the target
-    iPhone becomes available for pickup.
-    """
 
     pickup_message = (
         result.get(
             "store_pickup_quote",
             ""
         )
-        or result.get(
+        or
+        result.get(
             "pickup_quote",
             ""
         )
-        or "Available for pickup"
+        or
+        "Available for pickup"
     )
 
     message = (
-        "🚨 iPHONE PICKUP AVAILABLE 🚨\n\n"
+        "IPHONE PICKUP AVAILABLE\n\n"
 
         f"Product: {result['title']}\n"
         f"Capacity: {CAPACITY}\n"
@@ -518,26 +506,20 @@ def send_notification(result):
 
         f"Pickup: {pickup_message}\n\n"
 
-        "⚡ Check Apple immediately:\n"
+        "CHECK APPLE IMMEDIATELY:\n"
         "https://www.apple.com/in/shop/"
         "buy-iphone/iphone-18-pro"
     )
 
     send_ntfy(
-        title=(
-            "🚨 iPhone 18 Pro Max "
-            "Pickup Available!"
-        ),
+        title="iPhone 18 Pro Max Pickup Available",
         message=message,
         priority="urgent",
-        tags=(
-            "iphone,apple,"
-            "rotating_light"
-        )
+        tags="iphone,apple,rotating_light"
     )
 
     print(
-        "🚨 AVAILABILITY NOTIFICATION "
+        "AVAILABILITY NOTIFICATION "
         "SENT SUCCESSFULLY"
     )
 
@@ -548,14 +530,15 @@ def send_notification(result):
 
 def main():
 
-    # --------------------------------------------------------
+    # ========================================================
+    # TEST MODE
+    #
     # IMPORTANT:
+    # This happens BEFORE the Apple API call.
     #
-    # Test mode MUST be checked BEFORE the Apple API.
-    #
-    # This makes the notification test independent from
-    # Apple's availability/API.
-    # --------------------------------------------------------
+    # Therefore the notification test is completely
+    # independent from Apple availability.
+    # ========================================================
 
     if TEST_NOTIFICATION:
 
@@ -564,7 +547,7 @@ def main():
             send_test_notification()
 
             print(
-                "✅ Test notification completed."
+                "Test notification completed."
             )
 
             return 0
@@ -572,7 +555,7 @@ def main():
         except Exception as error:
 
             print(
-                "❌ TEST NOTIFICATION FAILED: "
+                "TEST NOTIFICATION FAILED: "
                 f"{error}",
                 file=sys.stderr
             )
@@ -580,9 +563,9 @@ def main():
             return 2
 
 
-    # --------------------------------------------------------
-    # Normal monitoring mode
-    # --------------------------------------------------------
+    # ========================================================
+    # NORMAL MONITORING MODE
+    # ========================================================
 
     previous = load_state()
 
@@ -598,7 +581,7 @@ def main():
     )
 
     print(
-        "🍎 Apple iPhone Pickup Monitor"
+        "Apple iPhone Pickup Monitor"
     )
 
     print(
@@ -606,33 +589,27 @@ def main():
     )
 
     print(
-        f"Product: "
-        f"{PRODUCT_NAME}"
+        f"Product: {PRODUCT_NAME}"
     )
 
     print(
-        f"Capacity: "
-        f"{CAPACITY}"
+        f"Capacity: {CAPACITY}"
     )
 
     print(
-        f"Finish: "
-        f"{FINISH}"
+        f"Finish: {FINISH}"
     )
 
     print(
-        f"Store: "
-        f"Apple {APPLE_STORE_NAME}"
+        f"Store: Apple {APPLE_STORE_NAME}"
     )
 
     print(
-        f"Store ID: "
-        f"{APPLE_STORE_NUMBER}"
+        f"Store ID: {APPLE_STORE_NUMBER}"
     )
 
     print(
-        f"SKU: "
-        f"{APPLE_PART_NUMBER}"
+        f"SKU: {APPLE_PART_NUMBER}"
     )
 
     print(
@@ -644,18 +621,16 @@ def main():
         "========================================"
     )
 
-
     try:
 
         # ----------------------------------------------------
-        # Check Apple
+        # Query Apple
         # ----------------------------------------------------
 
         result = get_pickup_status()
 
-
         # ----------------------------------------------------
-        # Print result
+        # Display result
         # ----------------------------------------------------
 
         print(
@@ -683,18 +658,12 @@ def main():
             f"{result['store_pickup_quote']}"
         )
 
-
-        # ----------------------------------------------------
-        # Availability transition detection
-        # ----------------------------------------------------
-
         current_available = bool(
             result["available"]
         )
 
-
         # ----------------------------------------------------
-        # UNAVAILABLE → AVAILABLE
+        # UNAVAILABLE -> AVAILABLE
         # ----------------------------------------------------
 
         if (
@@ -703,17 +672,16 @@ def main():
         ):
 
             print(
-                "🚨 STATUS CHANGED:"
+                "STATUS CHANGED:"
             )
 
             print(
-                "UNAVAILABLE → AVAILABLE"
+                "UNAVAILABLE -> AVAILABLE"
             )
 
             send_notification(
                 result
             )
-
 
         # ----------------------------------------------------
         # STILL AVAILABLE
@@ -722,14 +690,13 @@ def main():
         elif current_available:
 
             print(
-                "🟢 Still available."
+                "Still available."
             )
 
             print(
                 "No duplicate notification "
                 "will be sent."
             )
-
 
         # ----------------------------------------------------
         # UNAVAILABLE
@@ -738,12 +705,11 @@ def main():
         else:
 
             print(
-                "🔴 Currently unavailable."
+                "Currently unavailable."
             )
 
-
         # ----------------------------------------------------
-        # Save only after successful Apple check
+        # Save state only after a successful Apple check
         # ----------------------------------------------------
 
         save_state(
@@ -751,7 +717,7 @@ def main():
         )
 
         print(
-            "✅ State saved successfully."
+            "State saved successfully."
         )
 
         print(
@@ -760,16 +726,12 @@ def main():
 
         return 0
 
-
     except Exception as error:
 
         # ----------------------------------------------------
         # IMPORTANT:
         #
-        # We DO NOT save "unavailable" here.
-        #
-        # An API failure must never be interpreted as
-        # the phone being unavailable.
+        # API errors NEVER overwrite the previous state.
         # ----------------------------------------------------
 
         print(
@@ -777,7 +739,7 @@ def main():
         )
 
         print(
-            "❌ CHECK FAILED / UNKNOWN"
+            "CHECK FAILED / UNKNOWN"
         )
 
         print(
@@ -801,6 +763,7 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
+
     sys.exit(
         main()
     )

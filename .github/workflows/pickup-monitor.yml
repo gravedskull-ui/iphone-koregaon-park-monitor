@@ -2,13 +2,13 @@ name: Apple Pickup Monitor - Koregaon Park
 
 on:
   workflow_dispatch:
+    inputs:
+      test_notification:
+        description: "Send a test notification to ntfy"
+        required: true
+        default: false
+        type: boolean
 
-  push:
-    branches:
-      - main
-
-  schedule:
-    - cron: "7/10 * * * *"
 
 permissions: 
   contents: write
